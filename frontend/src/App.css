@@ -1,0 +1,10 @@
+/* FusionLab — 全局样式覆盖 */
+/* 主体样式在 App.tsx inline styles 里，这里只做全局兜底 */
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
