@@ -121,8 +121,14 @@ def main(source_model: str, save_dir: str, save_name: str,
     print("  actor_loss        — Actor 策略损失（应逐渐减小）")
     print("  temp              — SAC 熵系数（固定 0.1，防发散）\n")
 
-    # ─── 1. 加载 PPO 模型（v7 → fallback v5）─────────────────────────────────
-    print(f"[1/4] 加载 PPO 模型：{source_model}")
+    # ─── 1. 加载 PPO 模型（优先 best.zip → final.zip → fallback v5）────────────
+    # ★ best.zip 是训练中 mean_reward 最高时的检查点，避免用训练末期崩塌的 final.zip
+    best_candidate = str(Path(source_model).parent / "best.zip")
+    if Path(best_candidate).exists():
+        source_model = best_candidate
+        print(f"[1/4] 加载 PPO 模型（best checkpoint）：{source_model}")
+    else:
+        print(f"[1/4] 加载 PPO 模型：{source_model}")
     if not Path(source_model).exists():
         print(f"  ⚠️ {source_model} 不存在，回退到 v5：{P1_V5_PATH}")
         source_model = P1_V5_PATH
@@ -195,19 +201,23 @@ def main(source_model: str, save_dir: str, save_name: str,
         critic_encoder_factory=d3rlpy.models.VectorEncoderFactory(hidden_units=[256, 256]),
         actor_optim_factory=d3rlpy.optimizers.AdamFactory(clip_grad_norm=10.0),   # ★ 梯度裁剪
         critic_optim_factory=d3rlpy.optimizers.AdamFactory(clip_grad_norm=10.0),  # ★ 梯度裁剪
-    ).create()
+    # ★ 强制 CPU：d3rlpy 在 MPS 上 epoch 结束时会 silent crash（Apple Silicon）
+    ).create(device='cpu')
 
     save_dir_path = Path(save_dir)
     save_dir_path.mkdir(parents=True, exist_ok=True)
     cql_save = str(save_dir_path / save_name)
 
+    # ★ FileAdapter 替代 Noop：每 epoch 写入日志，方便排查崩溃位置
+    log_dir = save_dir_path / "cql_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     cql.fit(
         dataset,
         n_steps=n_steps,
         n_steps_per_epoch=10_000,
         save_interval=20,
         evaluators={},
-        logger_adapter=d3rlpy.logging.NoopAdapterFactory(),
+        logger_adapter=d3rlpy.logging.FileAdapterFactory(root_dir=str(log_dir)),
     )
 
     print(f"\n[3/4] CQL 训练完成，保存：{cql_save}")

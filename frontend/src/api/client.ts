@@ -4,10 +4,11 @@
 
 import axios from 'axios';
 
-const BASE_URL = 'http://localhost:8000';
+// 通过 gateway 访问时路径以 /jpfusion 开头，直连时为空
+const _pathPrefix = window.location.pathname.startsWith('/jpfusion') ? '/jpfusion' : '';
 
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: _pathPrefix,
   timeout: 60000,
 });
 
@@ -114,4 +115,5 @@ export const fusionApi = {
     api.post('/api/plasma-profile-gs', params).then(r => r.data),
 };
 
-export const WS_URL = 'ws://localhost:8000/ws/training-progress';
+const _wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+export const WS_URL = `${_wsProto}//${window.location.host}${_pathPrefix}/ws/training-progress`;

@@ -4,7 +4,7 @@
  * 四阶段命名体系（数据来源 × 学习方式）：
  *   Phase 1 · Sim-RL      仿真环境在线强化学习（PPO）：v1~v6 版本对比表 + 推理
  *   Phase 2 · Sim-SFT     仿真环境监督微调（BC）：行为克隆预训练状态 + 推理
- *   Phase 3 · Offline-RL  历史数据离线强化学习（CQL）：EAST 数据需求
+ *   Phase 3 · Offline-RL  PPO 专家轨迹 + Phase 4b 回流轨迹（数据飞轮）
  *   Phase 4 · Model-RL    世界模型强化学习（MBRL）：Dyna 循环 + 精调
  *
  * 布局：
@@ -14,7 +14,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = window.location.pathname.startsWith('/jpfusion') ? '/jpfusion' : '';
 
 // ─── 类型 ─────────────────────────────────────────────────────────────────────
 interface RLStatus {
@@ -393,53 +393,38 @@ function Phase2Tab({ phase, phase1, addLog }: {
           Phase 2 · Sim-SFT — 仿真环境监督微调（行为克隆 BC）
         </div>
         <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7 }}>
-          三个子能力：2A τ_E 系数拟合 / 2B DTW 策略验证 / 2C SFT 行为克隆（监督学习专家轨迹）。
-          SFT Actor 可作为 PPO 热启动权重，使 RL 从有意义的初始策略开始训练。
+          行为克隆（BC）：从 Phase 1 专家轨迹中监督学习动作，得到 SFT Actor。
+          SFT Actor 可热启动 Phase 1 PPO，使 RL 从有意义的初始策略出发。
+          <span style={{ color: C.warning }}> 质量门槛：BC Actor 在 FusionEnv 评估 mean_reward ≥ 20K，否则自动跳过。</span>
         </div>
       </div>
 
-      {/* 三个能力状态卡 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        {[
-          {
-            id: '2A', label: 'τ_E 系数拟合', icon: '📐',
-            desc: '用 EAST 数据 scipy curve_fit，替换 ITER98pY2 默认系数',
-            ready: false, readyLabel: '需 EAST 数据',
-          },
-          {
-            id: '2B', label: 'DTW 策略验证', icon: '📏',
-            desc: 'FastDTW 计算 RL Agent 与 EAST 专家轨迹距离',
-            ready: false, readyLabel: '需 EAST 数据',
-          },
-          {
-            id: '2C', label: 'SFT 行为克隆', icon: '🧠',
-            desc: 'MLP Actor 监督学习，p2_sft_actor.pt',
-            ready: phase?.sft_ready ?? false,
-            readyLabel: phase?.sft_ready
-              ? `已训练 (${phase.sft_size_mb ?? '?'} MB)`
-              : '未训练',
-          },
-        ].map(cap => (
-          <div key={cap.id} style={{
-            background: C.panel, border: `1px solid ${cap.ready ? '#1a3d20' : C.border}`,
-            borderRadius: 8, padding: '10px 12px',
-          }}>
-            <div style={{ fontSize: 16, marginBottom: 4 }}>{cap.icon}</div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.text, marginBottom: 4 }}>
-              {cap.id} {cap.label}
-            </div>
-            <div style={{ fontSize: 9, color: C.muted, marginBottom: 8, lineHeight: 1.6 }}>
-              {cap.desc}
-            </div>
-            <div style={{
-              fontSize: 10, padding: '2px 8px', borderRadius: 4,
-              background: cap.ready ? '#0d2a12' : '#1e293b',
-              color: cap.ready ? C.success : C.dim, display: 'inline-block',
-            }}>
-              {cap.ready ? '✓' : '○'} {cap.readyLabel}
-            </div>
+      {/* SFT 状态卡 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{
+          background: C.panel, border: `1px solid ${phase?.sft_ready ? '#1a3d20' : C.border}`,
+          borderRadius: 8, padding: '14px',
+        }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>SFT BC Actor 状态</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: phase?.sft_ready ? C.success : C.dim }}>
+            {phase?.sft_ready ? '✓' : '○'}
           </div>
-        ))}
+          <div style={{ fontSize: 12, color: phase?.sft_ready ? C.success : C.muted, marginTop: 4 }}>
+            {phase?.sft_ready ? `已训练 (${phase.sft_size_mb ?? '?'} MB)` : '未训练'}
+          </div>
+        </div>
+        <div style={{
+          background: C.panel, border: `1px solid ${C.border}`,
+          borderRadius: 8, padding: '14px',
+        }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>训练流程</div>
+          <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.8 }}>
+            <div>• 数据：Phase 1 专家轨迹（PPO rollout）</div>
+            <div>• 算法：BCActorMLP（3层 MLP + Tanh×0.1）</div>
+            <div>• 输出：p2_sft_actor.pt → Phase 1 PPO 热启动</div>
+            <div style={{ color: C.warning }}>• 门槛：评估 ≥ 20K 才启用，否则跳过</div>
+          </div>
+        </div>
       </div>
 
       {/* Phase 2 PPO 模型（BC 热启动版本列表） */}
@@ -550,63 +535,54 @@ function Phase3Tab({ phase, addLog }: {
           Phase 3 · Offline-RL — 历史数据离线强化学习（CQL）
         </div>
         <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7 }}>
-          完全从 EAST 历史放电数据学习策略，不需要 FusionEnv 仿真器。
-          使用 d3rlpy 的 Conservative Q-Learning（CQL）算法，从 (s, a, r, s') 离线数据训练。
-          面临的挑战：Distribution shift / 奖励反推不准确 / 破裂样本稀疏。
+          Conservative Q-Learning（CQL）离线强化学习。
+          数据来源：<span style={{ color: C.p3 }}>Phase 1 专家轨迹</span> ＋
+          <span style={{ color: C.p4 }}> Phase 4b 回流轨迹</span>（数据飞轮核心）。
+          device='cpu' 防止 Apple Silicon MPS silent crash。奖励 z-score 归一化防 Q 值爆炸。
         </div>
       </div>
 
       {/* 状态卡 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <div style={{
-          background: C.panel, border: `1px solid ${C.border}`,
+          background: C.panel, border: `1px solid ${phase?.ready ? '#2d1500' : C.border}`,
           borderRadius: 8, padding: '14px',
         }}>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>CQL 模型状态</div>
-          <div style={{
-            fontSize: 28, fontWeight: 800,
-            color: phase?.ready ? C.success : C.dim,
-          }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: phase?.ready ? C.success : C.dim }}>
             {phase?.ready ? '✓' : '○'}
           </div>
           <div style={{ fontSize: 12, color: phase?.ready ? C.success : C.muted, marginTop: 4 }}>
             {phase?.ready ? `已训练：${phase.cql_path?.split('/').pop()}` : '暂未训练'}
           </div>
-          {!phase?.ready && (
-            <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.6 }}>
-              需要 ITPA IDDB 数据
-              <br />（Harvard Dataverse，1170+ 次放电）
-            </div>
-          )}
         </div>
 
         <div style={{
           background: C.panel, border: `1px solid ${C.border}`,
           borderRadius: 8, padding: '14px',
         }}>
-          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>训练要求</div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>数据飞轮输入</div>
           <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.8 }}>
-            <div>• EAST ITPA IDDB（CSV/HDF5）</div>
-            <div>• 约 100K CQL 训练步</div>
-            <div>• 预计时间：30-60 分钟</div>
-            <div>• 挑战：分布偏移（Distribution Shift）</div>
+            <div style={{ color: C.p1 }}>→ Phase 1 专家轨迹（PPO rollout）</div>
+            <div style={{ color: C.p4 }}>→ Phase 4b 回流轨迹（buffer.npz）</div>
+            <div>• 200K steps，device='cpu'</div>
+            <div>• z-score 归一化，conservative_weight=1.0</div>
           </div>
         </div>
       </div>
 
-      {/* 说明：为什么 Phase 3 难 */}
+      {/* 飞轮说明 */}
       <div style={{
-        padding: '12px', background: '#0d1020',
-        border: `1px solid #1e2a40`, borderRadius: 8,
+        padding: '12px', background: '#0d0a18',
+        border: `1px solid #2a1a3a`, borderRadius: 8,
         fontSize: 10, color: C.dim, lineHeight: 1.8,
       }}>
         <div style={{ fontWeight: 600, color: C.muted, marginBottom: 4 }}>
-          【Phase 3 挑战说明（真实科研难度）】
+          【数据飞轮机制】
         </div>
-        <div>• <span style={{ color: C.warning }}>分布偏移</span>：EAST 专家操作区域 ≠ CQL 探索区域</div>
-        <div>• <span style={{ color: C.warning }}>奖励反推</span>：τ_E 不直接可观测，需从 P_heat/dT/dt 近似</div>
-        <div>• <span style={{ color: C.warning }}>类别不平衡</span>：破裂 event 占比极低（&lt;3%），需特殊处理</div>
-        <div>• CQL 保守性系数（conservative_weight）需精细调参</div>
+        <div>Phase 1 PPO → <span style={{ color: C.p3 }}>Phase 3 CQL</span> → Phase 4a Dyna → Phase 4b 精调</div>
+        <div style={{ color: C.p4, marginTop: 4 }}>Phase 4b 产出的高质量轨迹（195K+ 水平）↩ 回流至 Phase 3</div>
+        <div style={{ color: C.muted, marginTop: 4 }}>每轮迭代：CQL 学到更好策略 → MBRL 热启更强 → 精调更高 → 更好轨迹回流</div>
       </div>
 
       {/* 推理按钮 */}
@@ -656,11 +632,52 @@ function Phase4Tab({ phase, addLog }: {
           Phase 4 · Model-RL — 世界模型强化学习（Dyna MBRL）
         </div>
         <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7 }}>
-          用 EAST 历史数据训练 MLP Ensemble 世界模型（5 个独立 MLP，输出均值 + 方差）。
-          RL Agent 在世界模型里训练（Dyna 循环）。
-          不确定性高的区域优先从真实数据学习，不确定性低的区域利用世界模型快速迭代。
+          <strong style={{ color: C.p4 }}>4a Dyna：</strong>DeepONet MLP Ensemble 世界模型内 100 轮 Dyna 迭代，加速探索。
+          <strong style={{ color: C.p4 }}> 4b 精调：</strong>FusionEnv 真实 ODE 环境直接精调，消除 World Model Bias。冠军 195.8K，Lawson 达成率 100%。
+          精调产出轨迹回流 Phase 3，构成数据飞轮。
         </div>
       </div>
+
+      {/* 冠军进度卡 */}
+      {(() => {
+        const champion = phase?.best_reward ?? 0;
+        const target = 200000;
+        const pct = Math.min(champion / target * 100, 100);
+        return (
+          <div style={{
+            padding: '14px 16px', background: '#0a0718',
+            border: `1px solid ${champion >= target ? C.success : '#3d2d6a'}`,
+            borderRadius: 8,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>当前冠军 mean_reward</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: champion >= target ? C.success : C.p4,
+                  fontVariantNumeric: 'tabular-nums' }}>
+                  {champion >= 1000 ? `${(champion/1000).toFixed(1)}K` : (champion || '—')}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>目标</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.muted }}>200K</div>
+                <div style={{ fontSize: 10, color: champion >= target ? C.success : C.warning, marginTop: 2 }}>
+                  {champion >= target ? '🏆 已达成！' : `差 ${(target - champion).toFixed(0)}`}
+                </div>
+              </div>
+            </div>
+            <div style={{ background: '#1e1535', borderRadius: 4, height: 8, overflow: 'hidden' }}>
+              <div style={{
+                width: `${pct}%`, height: '100%', borderRadius: 4,
+                background: champion >= target
+                  ? `linear-gradient(90deg, ${C.success}, #34d399)`
+                  : `linear-gradient(90deg, ${C.p4}, #c084fc)`,
+                transition: 'width 0.5s ease',
+              }} />
+            </div>
+            <div style={{ fontSize: 9, color: C.dim, marginTop: 4 }}>{pct.toFixed(1)}% of target</div>
+          </div>
+        );
+      })()}
 
       {/* 双状态卡 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -847,7 +864,9 @@ export function RLDashboard() {
 
   const connectWS = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    const ws = new WebSocket(`ws://localhost:8000/api/rl/ws`);
+    const _p = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const _pfx = window.location.pathname.startsWith('/jpfusion') ? '/jpfusion' : '';
+    const ws = new WebSocket(`${_p}//${window.location.host}${_pfx}/api/rl/ws`);
     ws.onopen    = () => addLog('WebSocket 已连接');
     ws.onclose   = () => {};
     ws.onerror   = () => addLog('WebSocket 连接失败');

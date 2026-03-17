@@ -108,10 +108,48 @@ def main(n_iterations: int, skip_stage1: bool, skip_sft: bool,
     # ────────────────────────────────────────────────────────────────────────
     # Stage 0：检查 SFT Actor
     # ────────────────────────────────────────────────────────────────────────
-    banner("Stage 0 — 检查 Phase 2 SFT Actor")
+    banner("Stage 0 — 检查 Phase 2 SFT Actor（含质量门槛）")
     sft_available = Path(P2_SFT_ACTOR).exists()
     if sft_available:
         print(f"  ✅ SFT Actor 存在：{P2_SFT_ACTOR}")
+        # ★ SFT 质量门槛：快速评估 SFT Actor 在 FusionEnv 的表现
+        # 若均值奖励 < 20K，说明 BC 没学到有效策略，降级为随机初始化（避免用烂热启动拖累 PPO）
+        print(f"  [质量检查] 运行 8 episodes 评估 SFT Actor...")
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).parent.parent))
+            import torch as _torch
+            import numpy as _np
+            from backend.rl.fusion_env import FusionEnv as _FusionEnv
+            from backend.rl.bc_pretrain import BCActorMLP as _BCActorMLP
+
+            _actor = _BCActorMLP(state_dim=7, action_dim=3, hidden=128)
+            _actor.load_state_dict(_torch.load(P2_SFT_ACTOR, map_location="cpu"))
+            _actor.eval()
+            _env = _FusionEnv(max_steps=500)
+            _rewards = []
+            for _ in range(8):
+                _obs, _ = _env.reset()
+                _done = False; _ep_rew = 0.0
+                while not _done:
+                    with _torch.no_grad():
+                        _obs_t = _torch.FloatTensor(_obs[:7]).unsqueeze(0)
+                        _act = _actor(_obs_t).squeeze(0).numpy()
+                    _obs, _rew, _term, _trunc, _ = _env.step(_act)
+                    _done = _term or _trunc
+                    _ep_rew += _rew
+                _rewards.append(_ep_rew)
+            _sft_mean = float(_np.mean(_rewards))
+            SFT_QUALITY_THRESHOLD = 20_000
+            print(f"  [质量检查] SFT 8-ep mean_reward = {_sft_mean:.0f}（门槛 {SFT_QUALITY_THRESHOLD:,}）")
+            if _sft_mean < SFT_QUALITY_THRESHOLD:
+                print(f"  ⚠️ SFT 质量不达标（{_sft_mean:.0f} < {SFT_QUALITY_THRESHOLD:,}）")
+                print(f"     降级：Phase 1 将从随机初始化开始，不使用此 SFT 热启动")
+                sft_available = False
+            else:
+                print(f"  ✅ SFT 质量达标，将用于 Phase 1 热启动")
+        except Exception as _e:
+            print(f"  ⚠️ SFT 质量检查失败（{_e}），跳过门槛，继续使用 SFT")
     else:
         if skip_sft:
             print(f"  ⚠️ SFT Actor 不存在（已设 --skip_sft，继续用随机初始化）")

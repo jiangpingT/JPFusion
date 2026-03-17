@@ -296,6 +296,7 @@ def train_rl(
             ws_callback=ws_callback,
             eval_freq=5000,
             verbose=1,
+            save_dir=str(save_dir),   # ★ 传入 save_dir 用于保存 best.zip
         )
         checkpoint_callback = CheckpointCallback(
             save_freq=20000,

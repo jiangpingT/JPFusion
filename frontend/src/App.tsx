@@ -54,7 +54,7 @@ export default function App() {
         <div style={styles.navRight}>
           <span style={styles.navVersion}>FusionRL · 四阶段</span>
           <a
-            href="http://localhost:8000/docs"
+            href="/docs"
             target="_blank"
             rel="noopener noreferrer"
             style={styles.navLink}

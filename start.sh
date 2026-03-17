@@ -1,6 +1,6 @@
 #!/bin/bash
-# FusionLab 一键启动脚本
-# 用法：cd fusion-platform && bash start.sh
+# FusionLab 一键启动脚本（外网访问版）
+# 访问地址：http://<IP>:18791/jpfusion
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,29 +25,22 @@ pip install -q -r backend/requirements.txt
 # ── 创建数据目录 ────────────────────────────────────────────
 mkdir -p data
 
-# ── 启动后端 ─────────────────────────────────────────────────
-echo "[3/4] 启动后端 FastAPI（端口 8000）..."
-uvicorn backend.main:app --reload --port 8000 --host 0.0.0.0 &
-BACKEND_PID=$!
-echo "  后端 PID: $BACKEND_PID"
-echo "  API 文档: http://localhost:8000/docs"
-
-# 等待后端就绪
-sleep 2
-
-# ── 启动前端 ─────────────────────────────────────────────────
-echo "[4/4] 启动前端 React（端口 3000）..."
+# ── 构建前端 ─────────────────────────────────────────────────
+echo "[3/4] 构建前端（npm run build）..."
 cd frontend
-npm start &
-FRONTEND_PID=$!
-echo "  前端 PID: $FRONTEND_PID"
-echo "  前端地址: http://localhost:3000"
+PUBLIC_URL=/jpfusion npm run build
+cd ..
+echo "  前端构建完成 → frontend/build/"
+
+# ── 启动后端（同时承担前端静态文件服务）─────────────────────
+echo "[4/4] 启动 FastAPI（端口 18791，0.0.0.0）..."
+uvicorn backend.main:app --port 18791 --host 0.0.0.0
 
 echo ""
 echo "======================================================"
-echo "  平台已启动！浏览器访问 http://localhost:3000"
-echo "  按 Ctrl+C 停止所有服务"
+echo "  平台已启动！"
+echo "  本地访问：http://localhost:18791/jpfusion"
+echo "  外网访问：http://<你的公网IP>:18791/jpfusion"
+echo "  API 文档：http://localhost:18791/docs"
+echo "  按 Ctrl+C 停止"
 echo "======================================================"
-
-# 等待任意进程退出
-wait $BACKEND_PID $FRONTEND_PID

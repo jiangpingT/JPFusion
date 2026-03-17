@@ -51,6 +51,8 @@ from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # ── 本地模块 ────────────────────────────────────────────────────────────────
@@ -86,14 +88,37 @@ async def startup_event():
     restore_state_from_db()
     print("[FusionLab] 后端已启动，训练状态已从 SQLite 恢复")
 
-# ── CORS（允许 React 前端在 3000 端口访问）──────────────────────────────────
+# ── CORS（同源部署，放开所有 origin）──────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── 前端静态文件（npm run build 产物）────────────────────────────────────────
+_FRONTEND_BUILD = os.path.join(os.path.dirname(__file__), "../frontend/build")
+
+if os.path.isdir(_FRONTEND_BUILD):
+    # /static/  →  前端 JS / CSS 等静态资源（gateway 剥掉 /jpfusion 前缀后对应此路径）
+    app.mount(
+        "/static",
+        StaticFiles(directory=os.path.join(_FRONTEND_BUILD, "static")),
+        name="frontend-static",
+    )
+
+    # 其他根目录静态文件（favicon.ico / manifest.json 等）
+    for _f in ("favicon.ico", "manifest.json", "robots.txt", "logo192.png", "logo512.png"):
+        _fp = os.path.join(_FRONTEND_BUILD, _f)
+        if os.path.exists(_fp):
+            _path = f"/{_f}"
+            app.mount(_path, StaticFiles(directory=_FRONTEND_BUILD, html=False), name=f"static-{_f}")
+
+    # SPA catch-all：所有非 API 路由返回 index.html（必须在所有 API 路由之后注册）
+    @app.get("/", include_in_schema=False)
+    async def serve_spa_root():
+        return FileResponse(os.path.join(_FRONTEND_BUILD, "index.html"))
 
 # ── WebSocket 连接管理器 ─────────────────────────────────────────────────────
 class ConnectionManager:
@@ -269,7 +294,7 @@ async def start_training(req: TrainRequest, background_tasks: BackgroundTasks):
         "batch_size": req.batch_size,
         "lr":         req.lr,
         "use_pinn":   req.use_pinn,
-        "ws_url":     "ws://localhost:8000/ws/training-progress",
+        "ws_url":     "/ws/training-progress",
     }
 
 
@@ -547,7 +572,7 @@ async def rl_train(req: RLTrainRequest, background_tasks: BackgroundTasks):
         "message":    "RL 训练已启动（后台运行）",
         "n_steps":    req.n_steps,
         "n_envs":     req.n_envs,
-        "ws_url":     "ws://localhost:8000/api/rl/ws",
+        "ws_url":     "/api/rl/ws",
     }
 
 
@@ -1056,17 +1081,41 @@ async def rl_phase_status():
         except Exception:
             pass
 
+    # 读取冠军记录（champion.json — 精调后由 phase4_finetune.py 写入，始终最新最优）
+    champion_path = models_dir / "p4_mbrl" / "champion.json"
+    champion_data = {}
+    if champion_path.exists():
+        try:
+            with open(champion_path) as f:
+                champion_data = json.load(f)
+        except Exception:
+            pass
+
+    # 取 champion.json 与 v3_results.json 中的最大值，确保 Dashboard 显示真实最高分
+    v3_reward   = v3_results.get("mean_reward") or -1e9
+    champ_reward = champion_data.get("mean_reward") or -1e9
+    if champ_reward > v3_reward:
+        best_reward  = champion_data.get("mean_reward")
+        best_std     = champion_data.get("std_reward")
+        best_lawson  = champion_data.get("lawson_rate")
+        disrupt_rate = champion_data.get("disrupt_rate")
+    else:
+        best_reward  = v3_results.get("mean_reward")
+        best_std     = v3_results.get("std_reward")
+        best_lawson  = v3_results.get("lawson_rate")
+        disrupt_rate = v3_results.get("disrupt_rate")
+
     phase4 = {
         "world_model_ready": wm_path.exists(),
         "world_model_path":  str(wm_path) if wm_path.exists() else None,
         "world_model_size_mb": round(wm_path.stat().st_size / 1e6, 2) if wm_path.exists() else None,
         "mbrl_ready":        mbrl_model is not None,
         "mbrl_path":         str(mbrl_model) if mbrl_model else None,
-        "best_reward":       v3_results.get("mean_reward"),
-        "best_std":          v3_results.get("std_reward"),
-        "best_lawson":       v3_results.get("lawson_rate"),
-        "disrupt_rate":      v3_results.get("disrupt_rate"),
-        "version":           v3_results.get("version"),
+        "best_reward":       best_reward,
+        "best_std":          best_std,
+        "best_lawson":       best_lawson,
+        "disrupt_rate":      disrupt_rate,
+        "version":           champion_data.get("archive") or v3_results.get("version"),
         "notes":             v3_results.get("notes"),
     }
 
@@ -1246,3 +1295,11 @@ async def rl_world_model_uncertainty():
         return {"success": True, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── SPA catch-all（必须在所有 API 路由之后）─────────────────────────────────
+_FRONTEND_BUILD_PATH = os.path.join(os.path.dirname(__file__), "../frontend/build")
+if os.path.isdir(_FRONTEND_BUILD_PATH):
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa_fallback(path: str):
+        return FileResponse(os.path.join(_FRONTEND_BUILD_PATH, "index.html"))

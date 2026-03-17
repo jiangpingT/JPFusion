@@ -41,7 +41,7 @@ from backend.rl.fusion_env import FusionEnv
 DEFAULT_MBRL_BEST = "data/rl_models/p4_mbrl/p4_mbrl_v3_best.zip"
 DEFAULT_SAVE_DIR  = Path("data/rl_models/p4_mbrl")
 DEFAULT_TRAJ_SAVE = "data/trajectories/p4_finetune_buffer.npz"
-N_FINETUNE_STEPS  = 300_000
+N_FINETUNE_STEPS  = 200_000
 
 
 class TrajectoryCollector(BaseCallback):
@@ -127,10 +127,10 @@ def main(mbrl_best: str = DEFAULT_MBRL_BEST,
     vec_env = VecMonitor(vec_env)
 
     agent = PPO.load(mbrl_best, env=vec_env,
-                     learning_rate=5e-5, clip_range=0.05, ent_coef=0.001)
+                     learning_rate=5e-6, clip_range=0.02, ent_coef=0.0005)
 
     print(f"  从 {mbrl_best} 热启动")
-    print(f"  精调步数：{N_FINETUNE_STEPS:,} | n_envs=4 | lr=5e-5")
+    print(f"  精调步数：{N_FINETUNE_STEPS:,} | n_envs=4 | lr=5e-6 | ent_coef=0.0005")
     print(f"  轨迹回流保存：{traj_save}\n")
 
     # ─── 精调前评估（20 episodes）────────────────────────────────────────────
